@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import numpy.matlib
 import matplotlib.pyplot as plt
@@ -319,13 +321,15 @@ def weiner_combination(Y, model, noise_std):
     """
     x = np.zeros(Y.shape)
     c = np.zeros((Y.shape[1], len(model.mix)))
+    if model.cov.ndim == 1:
+        model.cov= model.cov[...,np.newaxis]
     for i in range(len(model.mix)):
         cov_plus_var = model.cov[i] + (np.eye(model.cov[i].shape[0]) * (noise_std ** 2))
         c[:, i] = np.log(model.mix[i]) + \
-                  multivariate_normal.logpdf(Y.T, np.zeros(64), cov_plus_var)
+                  multivariate_normal.logpdf(Y.T,cov= cov_plus_var) #todo check with GSM
     c = np.exp(c - logsumexp(c, axis=1).reshape(-1, 1))
     for i in range(len(model.mix)):
-        x += c[:, i].T * wiener(Y, np.zeros(64),model.cov[i], noise_std)
+        x += c[:, i].T * wiener(Y, np.zeros(model.cov.shape[1]),model.cov[i], noise_std)
     return x
 
 
@@ -353,9 +357,6 @@ def expected_ciy(X, pi_y, cov_y, k):
     # return ciy
 
 
-def initialize_GSM(k):
-    # TODO
-    return np.zeros(k)
 
 
 def update_pi_y(ci_y):
@@ -364,15 +365,16 @@ def update_pi_y(ci_y):
 
 def update_r(X, ci_y, cov, k):
     r_sq = np.zeros(k)
-    xt_sig_x = X.transpose().dot(np.dot(np.linalg.inv(cov), X))
-    for i in range(k):
-        # numerater = np.dot(ci_y[:,i],xt_sig_x)
-        # numerater_sum = np.sum(numerater)
-        # r_sq[i] = np.divide(numerater_sum
-        #                     , 64 * np.sum(ci_y[i]))
+    # xt_sig_x = X.transpose().dot(np.dot(np.linalg.inv(cov), X))
 
-        r_sq[i] =np.diag(ci_y[:, i] * X.T.dot((np.linalg.pinv(cov)).
-                                  dot(X))).sum() / (X.shape[0] * ci_y.sum(axis=0)[i])
+    ci_y_sum = ci_y.sum(axis=0)
+    for i in range(k):
+        if cov.ndim ==0:
+            a = X.T.dot(((1 / cov) * X))
+            r_sq[i] = np.diag(ci_y[:, i] * a).sum() / (X.shape[0] * ci_y_sum[i])
+        else:
+            r_sq[i] =np.diag(ci_y[:, i] * X.T.dot((np.linalg.pinv(cov)).
+                                  dot(X))).sum() / (X.shape[0] * ci_y_sum[i])
     return r_sq
 
 
@@ -387,15 +389,17 @@ def learn_GSM(X, k):
     :param k: The number of components of the GSM model.
     :return: A trained GSM_Model object.
     """
-    pi_y = np.full(k, 1.0 / k)  # what is a good intialization?
+    pi_y = np.full(k, 1.0 / k)# what is a good intialization?
+    pi_y = np.random.random(k)# what is a good intialization?
+    pi_y/=pi_y.sum()
     last_r_square = np.zeros((k,1,1))
     cov = np.cov(X)
     r_square = np.random.random((k,1,1))
     cov_mat = cov * r_square
     last_pi_y = np.zeros(k)
     index = 0
-    while not np.all (np.isclose(last_r_square, r_square))or not np.all(np.isclose(last_pi_y,pi_y)):
-    # while not np.all (np.abs(last_r_square -  r_square) < EPSILON)or not np.all(np.abs(last_pi_y-pi_y)< EPSILON ):
+    # while not np.all (np.isclose(last_r_square, r_square))or not np.all(np.isclose(last_pi_y,pi_y)):
+    while not np.all (np.abs(last_r_square -  r_square) < EPSILON)or not np.all(np.abs(last_pi_y-pi_y)< EPSILON ):
         print(index)
         last_r_square = r_square  # for convergence check
         last_pi_y = pi_y
@@ -425,6 +429,19 @@ def learn_ICA(X, k):
     :param k: The number of components in the source gaussian mixtures.
     :return: A trained ICA_Model object.
     """
+    cov = np.cov(X)
+    P = np.linalg.eigh(cov)[1]
+    S = np.dot(P.T, X)
+    gsms = np.array((S.shape[0],k))
+    vars = np.zeros((S.shape[0]*k)).reshape(S.shape[0],k)
+    mix = np.zeros((S.shape[0]*k)).reshape(S.shape[0],k)
+    for i in range(S.shape[0]):
+        model = learn_GSM(S[i].reshape(1,-1), k)
+        vars[i] = model.cov.reshape(-1,k)
+        mix[i] = model.mix
+    return ICA_Model(P, vars, mix)
+
+
 
     # TODO: YOUR CODE HERE
 
@@ -434,7 +451,10 @@ def wiener(y, u, cov, noise_std):
     # q_sq = noise_std ** 2
     # return np.dot(np.linalg.inv(cov_inv + (1 / q_sq) * np.identity(cov_inv.shape[0])),
     #               np.dot(cov_inv, u) + (1 / q_sq) * y)
-    cov_inv = np.linalg.pinv(cov)
+    if cov.ndim ==1:
+        cov_inv = 1/cov
+    else:
+        cov_inv = np.linalg.pinv(cov)
     q_sq_inv = 1/(noise_std ** 2)
     squr_I = np.eye(cov.shape[0])
     np.fill_diagonal(squr_I, q_sq_inv)
@@ -453,7 +473,7 @@ def MVN_Denoise(Y, mvn_model, noise_std):
     :param noise_std: The standard deviation of the noise.
     :return: a DxM matrix of denoised image patches.
     """
-    return wiener(Y, np.zeros(64),model.cov, noise_std)
+    return wiener(Y, np.zeros(64),mvn_model.cov, noise_std)
 
 
 def GSM_Denoise(Y, gsm_model, noise_std):
@@ -486,12 +506,64 @@ def ICA_Denoise(Y, ica_model, noise_std):
     :param noise_std: The standard deviation of the noise.
     :return: a DxM matrix of denoised image patches.
     """
+    S_clean= np.zeros(Y.shape[0]*Y.shape[1]).reshape(Y.shape)
+    Y_in_S_spase= ica_model.P.T.dot(Y)
+    for i in range(Y_in_S_spase.shape[0]):
+        S_clean[i] =weiner_combination(Y_in_S_spase[i].reshape(1, -1), GSM_Model(ica_model.vars[i], ica_model.mix[i]), noise_std)
+    return ica_model.P.dot(S_clean)
 
     # TODO: YOUR CODE HERE
 
 
 if __name__ == '__main__':
-    images = get_images()
-    X = sample_patches(images)
-    model = learn_MVN(sample_patches(images))
-    test_denoising(grayscale_and_standardize(images)[0], model, MVN_Denoise)
+    # images = get_images()
+    # X = sample_patches(images)
+    # model = learn_ICA(sample_patches(images, n=1000),2)
+    # test_denoising(grayscale_and_standardize(images)[0], model, ICA_Denoise)
+    # Unpickle the training images and creating a data set.
+    with open('train_images.pickle', 'rb') as f:
+        train_pictures = pickle.load(f)
+    train_patches = sample_patches(train_pictures, n=1000)
+
+    # Unpickle the test images.
+    with open('test_images.pickle', 'rb') as f:
+        test_picture = pickle.load(f)
+
+    image_running_test_on = 0
+    test_patches = sample_patches(test_picture)
+
+    # Test EM and get log likelihood graph.
+    # _, log_likelihood_history = learn_GMM(train_patches, 15, get_initial_model(train_patches.T, 15))
+    # plt.plot(log_likelihood_history)
+    # plt.show()
+
+    # The MVN model.
+    training_start_time = time.time()
+    mvn_trained_model = learn_MVN(train_patches)
+    training_end_time = time.time()
+    minutes, seconds = (training_end_time - training_start_time) // 60, \
+                       (training_end_time - training_start_time) % 60
+    print("Training the MVN model took " + str(minutes) + " minutes and " + str(seconds) + " seconds.")
+    test_denoising(grayscale_and_standardize(test_picture)[image_running_test_on], mvn_trained_model, MVN_Denoise)
+    print("MVN's log likelihood is: " + str(MVN_log_likelihood(test_patches, mvn_trained_model)))
+
+    # The GSM model.
+    training_start_time = time.time()
+    gsm_trained_model = learn_GSM(train_patches, 5)
+    training_end_time = time.time()
+    minutes, seconds = (training_end_time - training_start_time) // 60, \
+                       (training_end_time - training_start_time) % 60
+    print("Training the GSM model took " + str(minutes) + " minutes and " + str(seconds) + " seconds.")
+    test_denoising(grayscale_and_standardize(test_picture)[image_running_test_on], gsm_trained_model, GSM_Denoise)
+    print("GSM's log likelihood is: " + str(GSM_log_likelihood(test_patches, gsm_trained_model)))
+
+    # The ICA model.
+    training_start_time = time.time()
+    ica_trained_model = learn_ICA(train_patches, 5)
+    training_end_time = time.time()
+    minutes, seconds = (training_end_time - training_start_time) // 60, \
+                       (training_end_time - training_start_time) % 60
+    print("Training the ICA model took " + str(minutes) + " minutes and " + str(seconds) + " seconds.")
+    test_denoising(grayscale_and_standardize(test_picture)[image_running_test_on], ica_trained_model, ICA_Denoise)
+    print("ICA's log likelihood is: " + str(ICA_log_likelihood(test_patches, ica_trained_model)))
+

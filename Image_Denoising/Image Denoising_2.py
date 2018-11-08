@@ -703,5 +703,5 @@ def grayscale_and_standardize(images, remove_mean=True):
 if __name__ == '__main__':
     images = get_images()
     X = sample_patches(images)
-    model = learn_GSM(sample_patches(images), 10)
-    test_denoising(grayscale_and_standardize(images)[0], model, GSM_Denoise)
+    model = learn_ICA(sample_patches(images),2)
+    test_denoising(grayscale_and_standardize(images)[0], model, ICA_Denoise)
